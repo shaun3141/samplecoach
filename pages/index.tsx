@@ -30,6 +30,7 @@ import {
   ToggleButton,
   Dialog,
   Snackbar,
+  Typography,
 } from "@mui/material";
 import {
   DataGrid,
@@ -45,9 +46,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 import FileUploadIcon from "@mui/icons-material/FileUpload";
 
 const INTERNAL_INDEX_FIELD = "index";
-const OPENAI_KEY = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const CHATGPT_URL = "https://api.openai.com/v1/chat/completions";
-const OPENAI_RPM_LIMIT = 60;
+const BASE_OPENAI_RPM_LIMIT = 3500;
 const MAX_RETRIES = 5;
 
 interface IQuestion {
@@ -215,6 +215,8 @@ export default function Home() {
   );
   const [questions, setQuestions] =
     useState<Record<string, IQuestion>>(BASE_QUESTIONS);
+  const [openAiApiKey, setOpenAiApiKey] = useState<string>("");
+  const [openAiRPM, setOpenAiRPM] = useState<number>(BASE_OPENAI_RPM_LIMIT);
 
   // Evaluation State
   const [evaluationStarted, setEvaluationStarted] = useState(false);
@@ -253,15 +255,12 @@ export default function Home() {
     // Set Headers to be JSON
     const headers = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENAI_KEY}`,
+      Authorization: `Bearer ${openAiApiKey}`,
     };
 
     // Pre rate limit our requests to be nice to OpenAI
     await new Promise((resolve) =>
-      setTimeout(
-        resolve,
-        Math.floor(promptData.index / OPENAI_RPM_LIMIT) * 60 * 1000
-      )
+      setTimeout(resolve, Math.floor(promptData.index / openAiRPM) * 60 * 1000)
     );
 
     // Build Request Body
@@ -844,6 +843,7 @@ export default function Home() {
                 {/* Questions and Prompt Settings */}
                 {activeStep === 1 && (
                   <>
+                    {/* Question Section */}
                     <Grid item xs={6}>
                       <Paper
                         sx={{
@@ -955,6 +955,7 @@ export default function Home() {
                       </Paper>
                     </Grid>
 
+                    {/* Prompt and OpenAI Settings */}
                     <Grid item xs={6}>
                       <Paper
                         sx={{
@@ -965,6 +966,56 @@ export default function Home() {
                         }}
                       >
                         <h3>Prompt Settings</h3>
+                        <TextField
+                          label="OpenAI API Key"
+                          fullWidth
+                          type="password"
+                          value={openAiApiKey}
+                          onChange={(e) => setOpenAiApiKey(e.target.value)}
+                          helperText="Your API key can be found in the OpenAI dashboard. It only exists in the browser and is not stored on the server."
+                        />
+
+                        <Typography
+                          variant="button"
+                          sx={{ marginBottom: "-15px" }}
+                        >
+                          Requests per Minute
+                        </Typography>
+                        <ToggleButtonGroup
+                          color="primary"
+                          value={openAiRPM}
+                          exclusive
+                          onChange={(e, v) => setOpenAiRPM(v)}
+                          sx={{ width: "100%" }}
+                        >
+                          <ToggleButton value={20}>
+                            20
+                            <br></br>(Free Tier)
+                          </ToggleButton>
+                          <ToggleButton value={60}>
+                            60<br></br>(Paid, first 48 hours)
+                          </ToggleButton>
+                          <ToggleButton value={3500}>
+                            3,500<br></br>(Paid)
+                          </ToggleButton>
+                        </ToggleButtonGroup>
+                        <Typography
+                          variant="body2"
+                          gutterBottom
+                          sx={{
+                            marginTop: "-15px",
+                            padding: "0px 10px",
+                            color: "rgba(0, 0, 0, 0.6);",
+                            fontSize: ".75rem",
+                          }}
+                        >
+                          The free tier has a limit of 20 requests per minute.
+                          Pay-as-you-go has a limit of 3,500 requests per minute
+                          (after 48 hours, 60 before). This application will
+                          handle the rate limiting for you, but setting this
+                          allows us to be nicer to OpenAI.
+                        </Typography>
+
                         <TextField
                           label="System Initialization"
                           multiline
@@ -1042,13 +1093,13 @@ export default function Home() {
                               {Math.floor(
                                 (Object.keys(questions).length *
                                   csvData.length) /
-                                  OPENAI_RPM_LIMIT
+                                  openAiRPM
                               )}{" "}
                               to{" "}
                               {Math.ceil(
                                 (Object.keys(questions).length *
                                   csvData.length) /
-                                  OPENAI_RPM_LIMIT
+                                  openAiRPM
                               )}{" "}
                               minutes
                             </p>
