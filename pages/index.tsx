@@ -31,6 +31,7 @@ import {
   Dialog,
   Snackbar,
   Typography,
+  // @ts-ignore - MUI types are missing this
 } from "@mui/material";
 import {
   DataGrid,
@@ -204,7 +205,7 @@ export default function Home() {
     null | string
   >("");
   const [autoIndexSamples, setAutoIndexSamples] = useState(true);
-  const [csvData, setCsvData] = useState<string[]>([]);
+  const [csvData, setCsvData] = useState<Record<string, string>[]>([]);
 
   // Prompt State
   const [systemPrompt, setSystemPrompt] = useState<string>(
@@ -234,10 +235,11 @@ export default function Home() {
 
   const loadCSV = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
+      // @ts-ignore - PapaParse types are wrong?
       Papa.parse(event.target.files[0], {
         header: true,
         skipEmptyLines: true,
-        complete: function (results: any[]) {
+        complete: function (results: { data: any[] }) {
           const firstItem = results.data[0];
           setCsvData(
             results.data.map((item, idx) => {
@@ -250,6 +252,39 @@ export default function Home() {
       });
     }
   };
+
+  function downloadCsv() {
+    // Transform Output to CSV Data
+    let csvOutput = outputData.map((item) => {
+      for (const question of Object.keys(questions)) {
+        item[question] = item.questions[question].evaluation.normalizedScore;
+      }
+      delete item["questions"];
+      return item;
+    });
+
+    const csv = Papa.unparse(csvOutput, {
+      columns: [...csvColumns, "weightedScore", ...Object.keys(questions)],
+    });
+
+    const csvData = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    let csvURL = null;
+    // @ts-ignore - IE11
+    if (navigator.msSaveBlob) {
+      // @ts-ignore - IE11
+      csvURL = navigator.msSaveBlob(csvData, "download.csv");
+    } else {
+      csvURL = window.URL.createObjectURL(csvData);
+    }
+
+    // Get Current Epoch Time
+    const epochTime = Math.floor(Date.now() / 1000);
+
+    const tempLink = document.createElement("a");
+    tempLink.href = csvURL;
+    tempLink.setAttribute("download", `evaluation_${epochTime}.csv`);
+    tempLink.click();
+  }
 
   async function chatRequest(promptData: any) {
     // Set Headers to be JSON
@@ -357,43 +392,14 @@ export default function Home() {
     };
   }
 
-  function downloadCsv() {
-    // Transform Output to CSV Data
-    let csvOutput = outputData.map((item) => {
-      for (const question of Object.keys(questions)) {
-        item[question] = item.questions[question].evaluation.normalizedScore;
-      }
-      delete item["questions"];
-      return item;
-    });
-
-    const csv = Papa.unparse(csvOutput, {
-      columns: [...csvColumns, "weightedScore", ...Object.keys(questions)],
-    });
-
-    const csvData = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    let csvURL = null;
-    if (navigator.msSaveBlob) {
-      csvURL = navigator.msSaveBlob(csvData, "download.csv");
-    } else {
-      csvURL = window.URL.createObjectURL(csvData);
-    }
-
-    // Get Current Epoch Time
-    const epochTime = Math.floor(Date.now() / 1000);
-
-    const tempLink = document.createElement("a");
-    tempLink.href = csvURL;
-    tempLink.setAttribute("download", `evaluation_${epochTime}.csv`);
-    tempLink.click();
-  }
-
   function downloadQuestions() {
     const jsonQuestions = new Blob([JSON.stringify(questions, null, 2)], {
       type: "text/csv;charset=utf-8;",
     });
     let jsonURL = null;
+    // @ts-ignore - IE11
     if (navigator.msSaveBlob) {
+      // @ts-ignore - IE11
       jsonURL = navigator.msSaveBlob(jsonQuestions, "download.csv");
     } else {
       jsonURL = window.URL.createObjectURL(jsonQuestions);
