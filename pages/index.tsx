@@ -1,123 +1,1094 @@
-import Head from 'next/head'
-import Image from 'next/image'
-import { Inter } from 'next/font/google'
-import styles from '@/styles/Home.module.css'
+import React, { useState, ChangeEvent } from "react";
 
-const inter = Inter({ subsets: ['latin'] })
+import Papa from "papaparse";
+import axios, { AxiosError } from "axios";
+import { RJSFSchema } from "@rjsf/utils";
+import validator from "@rjsf/validator-ajv8";
+import Form from "@rjsf/mui";
+import dynamic from "next/dynamic";
+const DynamicReactJson = dynamic(import("react-json-view"), { ssr: false });
+
+import Head from "next/head";
+import {
+  Box,
+  TextField,
+  FormControlLabel,
+  Checkbox,
+  LinearProgress,
+  Container,
+  Button,
+  Stepper,
+  Step,
+  StepLabel,
+  Grid,
+  Paper,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  ToggleButtonGroup,
+  ToggleButton,
+  Dialog,
+  Snackbar,
+} from "@mui/material";
+import {
+  DataGrid,
+  GridToolbarContainer,
+  GridToolbarFilterButton,
+  GridToolbarQuickFilter,
+} from "@mui/x-data-grid";
+import DataObjectIcon from "@mui/icons-material/DataObject";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import ReplayIcon from "@mui/icons-material/Replay";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import DownloadIcon from "@mui/icons-material/Download";
+import FileUploadIcon from "@mui/icons-material/FileUpload";
+
+const INTERNAL_INDEX_FIELD = "index";
+const OPENAI_KEY = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const CHATGPT_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_RPM_LIMIT = 60;
+const MAX_RETRIES = 5;
+
+interface IQuestion {
+  question: string;
+  answers: { answer: string; score: number }[];
+  active: boolean;
+  numResponses: number;
+  weight: number;
+}
+
+const BASE_QUESTIONS: Record<string, IQuestion> = {
+  grammar: {
+    question:
+      "Does the passage above have any grammar errors? Start your reply with a `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 0 },
+      { answer: "no", score: 1 },
+    ],
+    active: true,
+    numResponses: 10,
+    weight: 1,
+  },
+  spelling: {
+    question:
+      "Does the passage above have any spelling errors? Start your reply with a `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 0 },
+      { answer: "no", score: 1 },
+    ],
+    active: true,
+    numResponses: 10,
+    weight: 1,
+  },
+  spelling_and_grammar: {
+    question:
+      "Does the passage above have any spelling or grammar errors? Start your reply with a  `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 0 },
+      { answer: "no", score: 1 },
+    ],
+    active: true,
+    numResponses: 10,
+    weight: 1,
+  },
+  meets_goal: {
+    question:
+      "Does the passage above clearly meet the goal? Start your reply with a `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 1 },
+      { answer: "no", score: 0 },
+    ],
+    active: true,
+    numResponses: 5,
+    weight: 1,
+  },
+  vivid_details: {
+    question:
+      "Does the passage use vivid details to bring the story to life? Start your reply with a `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 1 },
+      { answer: "no", score: 0 },
+    ],
+    active: true,
+    numResponses: 5,
+    weight: 1,
+  },
+  engaging: {
+    question:
+      "Is the passage engaging to read? Start your reply with a `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 1 },
+      { answer: "no", score: 0 },
+    ],
+    active: true,
+    numResponses: 5,
+    weight: 1,
+  },
+  professional: {
+    question:
+      "Is the passage written in a professional way? Start your reply with a `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 1 },
+      { answer: "no", score: 0 },
+    ],
+    active: true,
+    numResponses: 5,
+    weight: 1,
+  },
+};
+
+const schema: RJSFSchema = {
+  title: "A customizable registration form",
+  description: "A simple form with additional properties example.",
+  type: "object",
+  additionalProperties: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        title: "Question",
+        default: "Does the...",
+      },
+      active: {
+        type: "boolean",
+        title: "Is Active",
+        default: true,
+      },
+      weight: {
+        type: "number",
+        title: "Weight",
+        default: 1,
+      },
+      numResponses: {
+        type: "number",
+        title: "# of Responses",
+        default: 3,
+      },
+      answers: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            answer: {
+              type: "string",
+              title: "Answer",
+              default: "Yes",
+            },
+            score: {
+              type: "number",
+              title: "Score",
+              default: 1,
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 export default function Home() {
+  // Stepper State
+  const steps = ["Upload", "Assessment", "Results"];
+  const [activeStep, setActiveStep] = useState<number>(0);
+
+  // Import CSV State
+  const [csvColumns, setCsvColumns] = useState<string[]>([]);
+  const [selectedPromptColumn, setSelectedPromptColumn] = useState<
+    null | string
+  >("");
+  const [selectedSampleColumn, setSelectedSampleColumn] = useState<
+    null | string
+  >("");
+  const [selectedIdentifierColumn, setSelectedIdentfierColumn] = useState<
+    null | string
+  >("");
+  const [autoIndexSamples, setAutoIndexSamples] = useState(true);
+  const [csvData, setCsvData] = useState<string[]>([]);
+
+  // Prompt State
+  const [systemPrompt, setSystemPrompt] = useState<string>(
+    "You are an expert copywriter who carefully evaluates passages to answer questions about them. Each passage will have a goal, a response, and a question about it."
+  );
+  const [userPrompt, setUserPrompt] = useState<string>(
+    "Goal: $PROMPT\n\nResponse:\n```\n$SAMPLE\n```\n\n$QUESTION"
+  );
+  const [questions, setQuestions] =
+    useState<Record<string, IQuestion>>(BASE_QUESTIONS);
+
+  // Evaluation State
+  const [evaluationStarted, setEvaluationStarted] = useState(false);
+  const [evaluationFinished, setEvaluationFinished] = useState(false);
+  const [progressState, setProgressState] = useState({ evaluationProgress: 0 });
+  const [outputData, setOutputData] = useState<any[]>([]);
+
+  // Question State
+  const [questionView, setQuestionView] = useState("json");
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importQuestionsText, setImportQuestionsText] = useState("");
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [snackbarText, setSnackbarText] = useState("");
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+
+  const loadCSV = (event: ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      Papa.parse(event.target.files[0], {
+        header: true,
+        skipEmptyLines: true,
+        complete: function (results: any[]) {
+          const firstItem = results.data[0];
+          setCsvData(
+            results.data.map((item, idx) => {
+              item[INTERNAL_INDEX_FIELD] = idx;
+              return item;
+            })
+          );
+          setCsvColumns([...Object.keys(firstItem), INTERNAL_INDEX_FIELD]);
+        },
+      });
+    }
+  };
+
+  async function chatRequest(promptData: any) {
+    // Set Headers to be JSON
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_KEY}`,
+    };
+
+    // Pre rate limit our requests to be nice to OpenAI
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        Math.floor(promptData.index / OPENAI_RPM_LIMIT) * 60 * 1000
+      )
+    );
+
+    // Build Request Body
+    const body = {
+      model: "gpt-3.5-turbo",
+      // model: "text-davinci-002",
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: promptData.prompt,
+        },
+      ],
+      n: promptData.question.numResponses,
+    };
+
+    // Exponentially Retry
+    let numberOfRetries = 0;
+    while (numberOfRetries <= MAX_RETRIES) {
+      try {
+        const response = await axios.post(CHATGPT_URL, body, {
+          headers: headers,
+        });
+        promptData.response = response.data;
+        promptData.success = true;
+        promptData.error = null;
+        progressState.evaluationProgress = progressState.evaluationProgress + 1;
+        setProgressState({ ...progressState });
+        return promptData;
+      } catch (rawError: any) {
+        const error = rawError as AxiosError;
+        if (error.response?.status === 429) {
+          const delay = Math.pow(2, numberOfRetries + Math.random()) * 1000;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        } else {
+          promptData.response = null;
+          promptData.success = false;
+          promptData.error = error;
+          progressState.evaluationProgress =
+            progressState.evaluationProgress + 1;
+          setProgressState({ ...progressState });
+          return promptData;
+        }
+      }
+      numberOfRetries++;
+    }
+
+    // Catch All
+    promptData.response = null;
+    promptData.success = false;
+    promptData.error = "timeout";
+    progressState.evaluationProgress = progressState.evaluationProgress + 1;
+    setProgressState({ ...progressState });
+    return promptData;
+  }
+
+  function computeResponse(questionAsked: any, rawAnswer: any) {
+    let score = 0;
+    let nAnswers = 0;
+
+    for (const choice of rawAnswer.choices) {
+      // Sanitize string and break into words
+      const textParts = choice.message.content
+        .replace(/[^a-zA-Z0-9\s]/g, "")
+        .toLowerCase()
+        .split(" ");
+
+      // Find the answer
+      let VERY_HIGH_NUMBER = 100000;
+      let firstAnswer = VERY_HIGH_NUMBER;
+      let answerScore = 0;
+
+      for (const answer of questionAsked.answers) {
+        let idx = textParts.indexOf(
+          answer.answer.replace(/[^a-zA-Z0-9\s]/g, "").toLowerCase()
+        );
+        if (idx !== -1 && idx < firstAnswer) {
+          firstAnswer = idx;
+          answerScore = answer.score;
+        }
+      }
+
+      // If we found an answer, add it to the score
+      if (firstAnswer !== VERY_HIGH_NUMBER) {
+        score += answerScore;
+        nAnswers++;
+      }
+    }
+
+    return {
+      normalizedScore: score / nAnswers,
+      score,
+      nAnswers,
+    };
+  }
+
+  function downloadCsv() {
+    // Transform Output to CSV Data
+    let csvOutput = outputData.map((item) => {
+      for (const question of Object.keys(questions)) {
+        item[question] = item.questions[question].evaluation.normalizedScore;
+      }
+      delete item["questions"];
+      return item;
+    });
+
+    const csv = Papa.unparse(csvOutput, {
+      columns: [...csvColumns, "weightedScore", ...Object.keys(questions)],
+    });
+
+    const csvData = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    let csvURL = null;
+    if (navigator.msSaveBlob) {
+      csvURL = navigator.msSaveBlob(csvData, "download.csv");
+    } else {
+      csvURL = window.URL.createObjectURL(csvData);
+    }
+
+    // Get Current Epoch Time
+    const epochTime = Math.floor(Date.now() / 1000);
+
+    const tempLink = document.createElement("a");
+    tempLink.href = csvURL;
+    tempLink.setAttribute("download", `evaluation_${epochTime}.csv`);
+    tempLink.click();
+  }
+
+  function downloadQuestions() {
+    const jsonQuestions = new Blob([JSON.stringify(questions, null, 2)], {
+      type: "text/csv;charset=utf-8;",
+    });
+    let jsonURL = null;
+    if (navigator.msSaveBlob) {
+      jsonURL = navigator.msSaveBlob(jsonQuestions, "download.csv");
+    } else {
+      jsonURL = window.URL.createObjectURL(jsonQuestions);
+    }
+
+    // Get Current Epoch Time
+    const epochTime = Math.floor(Date.now() / 1000);
+
+    const tempLink = document.createElement("a");
+    tempLink.href = jsonURL;
+    tempLink.setAttribute("download", `questions_${epochTime}.json`);
+    tempLink.click();
+  }
+
+  async function runEvaluation() {
+    setEvaluationStarted(true);
+    setEvaluationFinished(false);
+    setProgressState({ evaluationProgress: 0 });
+
+    const prompts: any[] = [];
+
+    // Build Prompts w/ Context
+    if (selectedPromptColumn && selectedSampleColumn) {
+      csvData.map((data, dataIdx) => {
+        Object.keys(questions).map((question, qIdx) => {
+          if (questions[question].active) {
+            const prompt = userPrompt
+              .replace("$PROMPT", data[selectedPromptColumn])
+              .replace("$SAMPLE", data[selectedSampleColumn])
+              .replace("$QUESTION", questions[question].question);
+
+            const context = {
+              prompt,
+              data,
+              question: questions[question],
+              index: dataIdx * Object.keys(questions).length + qIdx,
+              questionKey: question,
+            };
+
+            prompts.push(context);
+          }
+        });
+      });
+    }
+
+    // Ask ChatGPT for responses
+    const responses = await Promise.allSettled(
+      prompts.map((prompt) => chatRequest(prompt))
+    );
+
+    // Build the output based on the sample index
+    const output = [];
+    for (const promiseResult of responses) {
+      if (promiseResult.status === "fulfilled") {
+        const val = promiseResult.value;
+        if (!output[val.data[INTERNAL_INDEX_FIELD]]) {
+          output[val.data[INTERNAL_INDEX_FIELD]] = {
+            ...val.data,
+            questions: {},
+          };
+        }
+
+        output[val.data[INTERNAL_INDEX_FIELD]]["questions"][val.questionKey] = {
+          rawAnswer: val.response,
+          successfulAnswer: val.success,
+          error: val.error,
+          questionAsked: val.question,
+          evaluation: computeResponse(val.question, val.response),
+          promptUsed: val.prompt,
+        };
+      }
+    }
+
+    // Compute Weighted Scores
+    for (let i = 0; i < output.length; i++) {
+      let score = 0;
+      let nQuestions = 0;
+      for (const questionKey of Object.keys(output[i].questions)) {
+        if (output[i].questions[questionKey].successfulAnswer) {
+          score +=
+            output[i].questions[questionKey].evaluation.normalizedScore *
+            questions[questionKey].weight;
+          nQuestions++;
+        }
+      }
+      output[i].weightedScore = score / nQuestions;
+    }
+
+    setEvaluationFinished(true);
+    setOutputData(output);
+
+    console.log(output);
+  }
+
+  function CustomToolbar() {
+    return (
+      <GridToolbarContainer
+        sx={{ display: "flex", justifyContent: "space-between" }}
+      >
+        <GridToolbarFilterButton />
+        <GridToolbarQuickFilter />
+      </GridToolbarContainer>
+    );
+  }
+
   return (
     <>
       <Head>
-        <title>Create Next App</title>
+        <title>Authormation</title>
         <meta name="description" content="Generated by create next app" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
-      <main className={styles.main}>
-        <div className={styles.description}>
-          <p>
-            Get started by editing&nbsp;
-            <code className={styles.code}>pages/index.tsx</code>
-          </p>
-          <div>
-            <a
-              href="https://vercel.com?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              By{' '}
-              <Image
-                src="/vercel.svg"
-                alt="Vercel Logo"
-                className={styles.vercelLogo}
-                width={100}
-                height={24}
-                priority
-              />
-            </a>
-          </div>
-        </div>
+      <main>
+        {/* TODO: Add a Header */}
 
-        <div className={styles.center}>
-          <Image
-            className={styles.logo}
-            src="/next.svg"
-            alt="Next.js Logo"
-            width={180}
-            height={37}
-            priority
-          />
-          <div className={styles.thirteen}>
-            <Image
-              src="/thirteen.svg"
-              alt="13"
-              width={40}
-              height={31}
-              priority
+        {/* Import Modal */}
+        <Dialog
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          aria-labelledby="modal-modal-title"
+          aria-describedby="modal-modal-description"
+        >
+          <Box sx={{ padding: "25px" }}>
+            <h3>Import</h3>
+            <Box
+              sx={{
+                height: 20,
+                width: "100%",
+                display: "block",
+              }}
+            ></Box>
+
+            <TextField
+              label="Question JSON to Import"
+              multiline
+              fullWidth
+              rows={8}
+              value={importQuestionsText}
+              sx={{ width: "450px" }}
+              onChange={(e) => setImportQuestionsText(e.target.value)}
+              helperText="Paste in a valid Question JSON to import."
             />
-          </div>
-        </div>
 
-        <div className={styles.grid}>
-          <a
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Docs <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Find in-depth information about Next.js features and&nbsp;API.
-            </p>
-          </a>
+            <Box
+              sx={{
+                height: 20,
+                width: "100%",
+                display: "block",
+              }}
+            ></Box>
 
-          <a
-            href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Learn <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Learn about Next.js in an interactive course with&nbsp;quizzes!
-            </p>
-          </a>
+            <Box>
+              <Button
+                variant="outlined"
+                sx={{ marginRight: "10px" }}
+                disabled={!importQuestionsText}
+                onClick={() => {
+                  setQuestions(JSON.parse(importQuestionsText));
+                  setImportModalOpen(false);
+                  setSnackbarText("Questions Imported Successfully!");
+                  setSnackbarOpen(true);
+                }}
+              >
+                <FileUploadIcon sx={{ marginRight: "10px" }} /> Import
+              </Button>
+            </Box>
+          </Box>
+        </Dialog>
 
-          <a
-            href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Templates <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Discover and deploy boilerplate example Next.js&nbsp;projects.
-            </p>
-          </a>
+        {/* Export Modal */}
+        <Dialog
+          open={exportModalOpen}
+          onClose={() => setExportModalOpen(false)}
+          aria-labelledby="modal-modal-title"
+          aria-describedby="modal-modal-description"
+          sx={{ marginBottom: "200px" }}
+        >
+          <Box sx={{ padding: "25px" }}>
+            <h3>Export</h3>
+            <Box
+              sx={{
+                height: 20,
+                width: "100%",
+                display: "block",
+              }}
+            ></Box>
+            <Box>
+              <Button
+                variant="outlined"
+                sx={{ marginRight: "10px" }}
+                onClick={() => {
+                  console.log("Copy as JSON");
+                  navigator.clipboard.writeText(
+                    JSON.stringify(questions, null, 2)
+                  );
+                }}
+              >
+                <ContentCopyIcon sx={{ marginRight: "10px" }} /> Copy as JSON
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => {
+                  downloadQuestions();
+                }}
+              >
+                <DownloadIcon sx={{ marginRight: "10px" }} /> Download JSON
+              </Button>
+            </Box>
+          </Box>
+        </Dialog>
 
-          <a
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Deploy <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Instantly deploy your Next.js site to a shareable URL
-              with&nbsp;Vercel.
-            </p>
-          </a>
-        </div>
+        {/* Snack / Toast Modal */}
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={4000}
+          onClose={() => setSnackbarOpen(false)}
+          message={snackbarText}
+        />
+
+        <Box>
+          <Container maxWidth="lg">
+            <Paper sx={{ padding: 1, margin: 1 }}>
+              <Grid
+                container
+                spacing={2}
+                rowSpacing={3}
+                sx={{ width: "100%", marginLeft: 0 }}
+              >
+                {/* Stepper Components */}
+                <>
+                  <Grid item xs={12}>
+                    <Stepper activeStep={activeStep}>
+                      {steps.map((label, index) => {
+                        const stepProps: { completed?: boolean } = {};
+                        if (index < activeStep) {
+                          stepProps.completed = true;
+                        }
+
+                        return (
+                          <Step key={label} {...stepProps}>
+                            <StepLabel>{label}</StepLabel>
+                          </Step>
+                        );
+                      })}
+                    </Stepper>
+                  </Grid>
+                  <Grid
+                    item
+                    xs={12}
+                    sx={{
+                      justifyContent: "space-between",
+                      display: "flex",
+                    }}
+                  >
+                    <Button
+                      variant="outlined"
+                      disabled={activeStep === 0}
+                      onClick={() => setActiveStep(activeStep - 1)}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      disabled={activeStep === steps.length - 1}
+                      onClick={() => setActiveStep(activeStep + 1)}
+                    >
+                      Next
+                    </Button>
+                  </Grid>
+                </>
+
+                {/* CSV Import + Preview */}
+                {activeStep === 0 && (
+                  <>
+                    <Grid item xs={3}>
+                      <Box padding={"5px"}>
+                        <b>File Selector</b>
+                      </Box>
+                      <input
+                        type="file"
+                        name="file"
+                        accept=".csv"
+                        onChange={loadCSV}
+                        style={{ display: "block", margin: "10px auto" }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={3}>
+                      <Box padding={"5px"}>
+                        <b>Prompt</b> Column
+                      </Box>
+                      <FormControl fullWidth>
+                        <InputLabel id="prompt-select-label">Prompt</InputLabel>
+                        <Select
+                          value={selectedPromptColumn}
+                          labelId="prompt-select-label"
+                          label="Question"
+                          onChange={(e) =>
+                            setSelectedPromptColumn(e.target.value)
+                          }
+                        >
+                          <MenuItem value="">
+                            <em>None</em>
+                          </MenuItem>
+                          {csvColumns.map((column, idx) => (
+                            <MenuItem key={idx} value={column}>
+                              {column}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    <Grid item xs={3}>
+                      <Box padding={"5px"}>
+                        <b>Sample</b> Column
+                      </Box>
+                      <FormControl fullWidth>
+                        <InputLabel id="sample-select-label">Sample</InputLabel>
+                        <Select
+                          value={selectedSampleColumn}
+                          labelId="sample-select-label"
+                          label="Sample"
+                          onChange={(e) =>
+                            setSelectedSampleColumn(e.target.value)
+                          }
+                        >
+                          <MenuItem value="">
+                            <em>None</em>
+                          </MenuItem>
+                          {csvColumns.map((column, idx) => (
+                            <MenuItem key={idx} value={column}>
+                              {column}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    <Grid item xs={3}>
+                      <Box padding={"5px"}>
+                        <b>Identifier</b> Column{" "}
+                        <span style={{ fontSize: "12px", color: "#666" }}>
+                          (Optional)
+                        </span>
+                      </Box>
+                      <FormControl fullWidth>
+                        <InputLabel id="identifier-select-label">
+                          Identifier
+                        </InputLabel>
+                        <Select
+                          value={selectedIdentifierColumn}
+                          labelId="identifier-select-label"
+                          label="Identifier"
+                          onChange={(e) => {
+                            setSelectedIdentfierColumn(e.target.value);
+                            setAutoIndexSamples(false);
+                            if (!e.target.value) {
+                              setAutoIndexSamples(true);
+                            }
+                          }}
+                        >
+                          <MenuItem value="">
+                            <em>None</em>
+                          </MenuItem>
+                          {csvColumns.map((column, idx) => (
+                            <MenuItem key={idx} value={column}>
+                              {column}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={autoIndexSamples}
+                            onChange={(e) => {
+                              setAutoIndexSamples(e.target.checked);
+                              setSelectedIdentfierColumn("");
+                            }}
+                            inputProps={{ "aria-label": "Auto-generate Ids" }}
+                          />
+                        }
+                        label="Auto-generate Ids"
+                      />
+                    </Grid>
+
+                    <Box
+                      sx={{
+                        height: 20,
+                        width: "100%",
+                        display: "block",
+                      }}
+                    ></Box>
+
+                    {csvData.length > 0 &&
+                      (selectedIdentifierColumn || autoIndexSamples) &&
+                      selectedPromptColumn &&
+                      selectedSampleColumn && (
+                        <Box
+                          sx={{
+                            display: "flex",
+                            width: "100%",
+                            margin: "0 auto",
+                          }}
+                        >
+                          <Box sx={{ flexGrow: 1, height: 400 }}>
+                            <DataGrid
+                              rows={csvData.map((row, idx) => {
+                                return { ...row, id: idx };
+                              })}
+                              columns={[
+                                {
+                                  field: autoIndexSamples
+                                    ? INTERNAL_INDEX_FIELD
+                                    : selectedIdentifierColumn || "",
+                                  headerName: "Identifier",
+                                  width: 150,
+                                },
+                                {
+                                  field: selectedPromptColumn,
+                                  headerName: "Prompt",
+                                  flex: 0.3,
+                                },
+                                {
+                                  field: selectedSampleColumn,
+                                  headerName: "Sample",
+                                  flex: 0.7,
+                                },
+                              ]}
+                              components={{ Toolbar: CustomToolbar }}
+                              componentsProps={{
+                                toolbar: {
+                                  showQuickFilter: true,
+                                  quickFilterProps: { debounceMs: 500 },
+                                },
+                              }}
+                              disableSelectionOnClick
+                            />
+                          </Box>
+                        </Box>
+                      )}
+                  </>
+                )}
+
+                {/* Questions and Prompt Settings */}
+                {activeStep === 1 && (
+                  <>
+                    <Grid item xs={6}>
+                      <Paper
+                        sx={{
+                          padding: "10px",
+                          display: "flex",
+                          flexFlow: "wrap",
+                          rowGap: "20px",
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            display: "flex",
+                            width: "100%",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          {/* Title */}
+                          <Box>
+                            <h3>Questions</h3>
+                          </Box>
+                          <Box>
+                            <Button
+                              variant="outlined"
+                              sx={{ marginRight: "10px" }}
+                              onClick={() => setImportModalOpen(true)}
+                            >
+                              Import
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              onClick={() => setExportModalOpen(true)}
+                            >
+                              Export
+                            </Button>
+                          </Box>
+
+                          {/* Question Format */}
+                          <ToggleButtonGroup
+                            value={questionView}
+                            exclusive
+                            onChange={(e, v) => setQuestionView(v)}
+                            size="small"
+                            color="primary"
+                          >
+                            <ToggleButton value="wizard">
+                              <AutoFixHighIcon
+                              // sx={{ paddingRight: "5px" }}
+                              />
+                              {/* Wizard */}
+                            </ToggleButton>
+                            <ToggleButton value="json">
+                              <DataObjectIcon
+                              // sx={{ paddingRight: "5px" }}
+                              />{" "}
+                              {/* JSON */}
+                            </ToggleButton>
+                          </ToggleButtonGroup>
+                        </Box>
+
+                        {/* Wizard View */}
+                        {questionView === "wizard" && (
+                          <Form
+                            schema={schema}
+                            validator={validator}
+                            formData={questions}
+                            onChange={(e) => {
+                              setQuestions(e.formData);
+                            }}
+                          />
+                        )}
+
+                        {/* JSON View  */}
+                        {questionView === "json" && (
+                          <Box>
+                            <DynamicReactJson
+                              src={questions}
+                              displayDataTypes={false}
+                              displayObjectSize={false}
+                              // @ts-ignore - this is a valid prop
+                              displayArrayKey={false}
+                              collapsed={1}
+                              onEdit={(e) => {
+                                setQuestions(
+                                  e.updated_src as Record<string, IQuestion>
+                                );
+                              }}
+                              onAdd={(e) => {
+                                setQuestions(
+                                  e.updated_src as Record<string, IQuestion>
+                                );
+                              }}
+                              onDelete={(e) => {
+                                setQuestions(
+                                  e.updated_src as Record<string, IQuestion>
+                                );
+                              }}
+                            />
+                            <Box sx={{ height: "20px", width: "100%" }}></Box>
+                            <Button
+                              variant="outlined"
+                              onClick={() => {
+                                setQuestions(BASE_QUESTIONS);
+                              }}
+                            >
+                              <ReplayIcon sx={{ marginRight: "10px" }} /> Reset
+                            </Button>
+                          </Box>
+                        )}
+                      </Paper>
+                    </Grid>
+
+                    <Grid item xs={6}>
+                      <Paper
+                        sx={{
+                          padding: "10px",
+                          display: "flex",
+                          flexFlow: "wrap",
+                          rowGap: "20px",
+                        }}
+                      >
+                        <h3>Prompt Settings</h3>
+                        <TextField
+                          label="System Initialization"
+                          multiline
+                          fullWidth
+                          rows={4}
+                          value={systemPrompt}
+                          onChange={(e) => setSystemPrompt(e.target.value)}
+                          helperText="This prompt will be used to instruct the bot on who it is and what role it has."
+                        />
+                        <TextField
+                          label="Prompt Template"
+                          multiline
+                          fullWidth
+                          rows={8}
+                          value={userPrompt}
+                          onChange={(e) => setUserPrompt(e.target.value)}
+                          helperText="The prompt, sample, and question will be inserted into this template using the $PROMPT, $SAMPLE, and $QUESTION variables."
+                        />
+                      </Paper>
+                    </Grid>
+                  </>
+                )}
+
+                {/* Evaluation */}
+                {activeStep === 2 && (
+                  <>
+                    <Grid item xs={4}>
+                      <Paper
+                        sx={{
+                          padding: "10px",
+                          display: "flex",
+                          flexFlow: "wrap",
+                          rowGap: "20px",
+                        }}
+                      >
+                        <h3>Preview</h3>
+                        <Box width={"100%"}>
+                          <b># of Samples:</b>
+                          {" " + csvData.length}
+                        </Box>
+                        {/* TODO: Filter to only active questions */}
+                        <Box width={"100%"}>
+                          <b># of Questions:</b>
+                          {" " + Object.keys(questions).length}
+                        </Box>
+                        <Box width={"100%"}>
+                          <b>Total Combinations:</b>
+                          {" " + Object.keys(questions).length * csvData.length}
+                        </Box>
+
+                        <Box sx={{ textAlign: "center" }}>
+                          <Button
+                            variant="contained"
+                            onClick={() => runEvaluation()}
+                            sx={{ margin: "0 auto" }}
+                          >
+                            Start Evaluation
+                          </Button>
+                        </Box>
+                      </Paper>
+                    </Grid>
+                    <Grid item xs={8} sx={{}}>
+                      <Paper sx={{ padding: "10px" }}>
+                        <h3>Output</h3>
+                        {!evaluationStarted && (
+                          <>
+                            <Box sx={{ height: "20px", width: "100%" }}></Box>
+                            <p>
+                              Click <b>Start Evaluation</b> to start the
+                              analysis
+                            </p>
+                            <br></br>
+                            <p>
+                              <b>Estimated Completion Time:</b>{" "}
+                              {Math.floor(
+                                (Object.keys(questions).length *
+                                  csvData.length) /
+                                  OPENAI_RPM_LIMIT
+                              )}{" "}
+                              to{" "}
+                              {Math.ceil(
+                                (Object.keys(questions).length *
+                                  csvData.length) /
+                                  OPENAI_RPM_LIMIT
+                              )}{" "}
+                              minutes
+                            </p>
+                          </>
+                        )}
+                        {evaluationStarted && (
+                          <>
+                            <Box sx={{ height: "20px", width: "100%" }}></Box>
+                            <h4>Progress</h4>
+                            <LinearProgress
+                              variant="buffer"
+                              value={
+                                (progressState.evaluationProgress /
+                                  (Object.keys(questions).length *
+                                    csvData.length)) *
+                                100
+                              }
+                            />
+                          </>
+                        )}
+                        {evaluationFinished && (
+                          <>
+                            <Box sx={{ height: "20px", width: "100%" }}></Box>
+                            <Button
+                              variant="outlined"
+                              onClick={() => downloadCsv()}
+                            >
+                              Download .csv
+                            </Button>
+                          </>
+                        )}
+                      </Paper>
+                    </Grid>
+                  </>
+                )}
+              </Grid>
+            </Paper>
+          </Container>
+        </Box>
       </main>
     </>
-  )
+  );
 }
