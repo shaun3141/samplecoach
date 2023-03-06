@@ -277,7 +277,13 @@ export default function Home() {
     });
 
     const csv = Papa.unparse(csvOutput, {
-      columns: [...csvColumns, "weightedScore", ...Object.keys(questions)],
+      columns: [
+        ...csvColumns,
+        "weightedScore",
+        ...Object.keys(questions),
+      ].filter((_) => {
+        return _ !== INTERNAL_INDEX_FIELD;
+      }),
     });
 
     const csvData = new Blob([csv], { type: "text/csv;charset=utf-8;" });
