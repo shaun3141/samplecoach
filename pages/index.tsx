@@ -745,11 +745,15 @@ export default function Home() {
                           <MenuItem value="">
                             <em>None</em>
                           </MenuItem>
-                          {csvColumns.map((column, idx) => (
-                            <MenuItem key={idx} value={column}>
-                              {column}
-                            </MenuItem>
-                          ))}
+                          {csvColumns
+                            .filter((_) => {
+                              return _ !== INTERNAL_INDEX_FIELD;
+                            })
+                            .map((column, idx) => (
+                              <MenuItem key={idx} value={column}>
+                                {column}
+                              </MenuItem>
+                            ))}
                         </Select>
                       </FormControl>
                       <FormControlLabel
@@ -795,11 +799,15 @@ export default function Home() {
                           <MenuItem value="">
                             <em>None</em>
                           </MenuItem>
-                          {csvColumns.map((column, idx) => (
-                            <MenuItem key={idx} value={column}>
-                              {column}
-                            </MenuItem>
-                          ))}
+                          {csvColumns
+                            .filter((_) => {
+                              return _ !== INTERNAL_INDEX_FIELD;
+                            })
+                            .map((column, idx) => (
+                              <MenuItem key={idx} value={column}>
+                                {column}
+                              </MenuItem>
+                            ))}
                         </Select>
                       </FormControl>
                     </Grid>
@@ -830,11 +838,15 @@ export default function Home() {
                           <MenuItem value="">
                             <em>None</em>
                           </MenuItem>
-                          {csvColumns.map((column, idx) => (
-                            <MenuItem key={idx} value={column}>
-                              {column}
-                            </MenuItem>
-                          ))}
+                          {csvColumns
+                            .filter((_) => {
+                              return _ !== INTERNAL_INDEX_FIELD;
+                            })
+                            .map((column, idx) => (
+                              <MenuItem key={idx} value={column}>
+                                {column}
+                              </MenuItem>
+                            ))}
                         </Select>
                       </FormControl>
                       <FormControlLabel
