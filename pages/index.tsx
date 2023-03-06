@@ -714,7 +714,7 @@ export default function Home() {
                 {/* CSV Import + Preview */}
                 {activeStep === 0 && (
                   <>
-                    <Grid item xs={3}>
+                    <Grid item xs={12} lg={3}>
                       <Box padding={"5px"}>
                         <b>File Selector</b>
                       </Box>
@@ -727,7 +727,7 @@ export default function Home() {
                       />
                     </Grid>
 
-                    <Grid item xs={3}>
+                    <Grid item xs={12} lg={3}>
                       <Box padding={"5px"}>
                         <b>Prompt</b> Column
                       </Box>
@@ -778,7 +778,7 @@ export default function Home() {
                       )}
                     </Grid>
 
-                    <Grid item xs={3}>
+                    <Grid item xs={12} lg={3}>
                       <Box padding={"5px"}>
                         <b>Sample</b> Column
                       </Box>
@@ -804,7 +804,7 @@ export default function Home() {
                       </FormControl>
                     </Grid>
 
-                    <Grid item xs={3}>
+                    <Grid item xs={12} lg={3}>
                       <Box padding={"5px"}>
                         <b>Identifier</b> Column{" "}
                         <span style={{ fontSize: "12px", color: "#666" }}>
@@ -923,7 +923,7 @@ export default function Home() {
                 {activeStep === 1 && (
                   <>
                     {/* Question Section */}
-                    <Grid item xs={6}>
+                    <Grid item xs={12} lg={6}>
                       <Paper
                         sx={{
                           padding: "10px",
@@ -1035,7 +1035,7 @@ export default function Home() {
                     </Grid>
 
                     {/* Prompt and OpenAI Settings */}
-                    <Grid item xs={6}>
+                    <Grid item xs={12} lg={6}>
                       <Paper
                         sx={{
                           padding: "10px",
@@ -1121,7 +1121,7 @@ export default function Home() {
                 {/* Evaluation */}
                 {activeStep === 2 && (
                   <>
-                    <Grid item xs={4}>
+                    <Grid item xs={12} lg={4}>
                       <Paper
                         sx={{
                           padding: "10px",
@@ -1156,7 +1156,7 @@ export default function Home() {
                         </Box>
                       </Paper>
                     </Grid>
-                    <Grid item xs={8} sx={{}}>
+                    <Grid item xs={12} lg={8} sx={{}}>
                       <Paper sx={{ padding: "10px" }}>
                         <h3>Output</h3>
                         {!evaluationStarted && (
