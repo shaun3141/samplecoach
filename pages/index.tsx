@@ -93,6 +93,17 @@ const BASE_QUESTIONS: Record<string, IQuestion> = {
     numResponses: 10,
     weight: 1,
   },
+  native_speaker: {
+    question:
+      "Was the passage above written by a native English speaker? Start your reply with a  `yes` or `no`.",
+    answers: [
+      { answer: "yes", score: 0 },
+      { answer: "no", score: 1 },
+    ],
+    active: true,
+    numResponses: 10,
+    weight: 1,
+  },
   meets_goal: {
     question:
       "Does the passage above clearly meet the goal? Start your reply with a `yes` or `no`.",
@@ -206,6 +217,8 @@ export default function Home() {
   >("");
   const [autoIndexSamples, setAutoIndexSamples] = useState(true);
   const [csvData, setCsvData] = useState<Record<string, string>[]>([]);
+  const [useManualPrompt, setUseManualPrompt] = useState<boolean>(false);
+  const [manualPrompt, setManualPrompt] = useState<string>("");
 
   // Prompt State
   const [systemPrompt, setSystemPrompt] = useState<string>(
@@ -219,12 +232,6 @@ export default function Home() {
   const [openAiApiKey, setOpenAiApiKey] = useState<string>("");
   const [openAiRPM, setOpenAiRPM] = useState<number>(BASE_OPENAI_RPM_LIMIT);
 
-  // Evaluation State
-  const [evaluationStarted, setEvaluationStarted] = useState(false);
-  const [evaluationFinished, setEvaluationFinished] = useState(false);
-  const [progressState, setProgressState] = useState({ evaluationProgress: 0 });
-  const [outputData, setOutputData] = useState<any[]>([]);
-
   // Question State
   const [questionView, setQuestionView] = useState("json");
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -232,6 +239,12 @@ export default function Home() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [snackbarText, setSnackbarText] = useState("");
   const [snackbarOpen, setSnackbarOpen] = useState(false);
+
+  // Evaluation State
+  const [evaluationStarted, setEvaluationStarted] = useState(false);
+  const [evaluationFinished, setEvaluationFinished] = useState(false);
+  const [progressState, setProgressState] = useState({ evaluationProgress: 0 });
+  const [outputData, setOutputData] = useState<any[]>([]);
 
   const loadCSV = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -293,9 +306,14 @@ export default function Home() {
       Authorization: `Bearer ${openAiApiKey}`,
     };
 
-    // Pre rate limit our requests to be nice to OpenAI
+    // Set Delay to be per minute and per second, pegging the per second rate to the avg. per minute rate of Paid (3,500)
+    // 3500 / 60 = 58.3333 per second, 1 second divided by 58.3333 = 0.017 seconds, 0.017 * 1000 = 17 milliseconds, use 20ms as buffer
     await new Promise((resolve) =>
-      setTimeout(resolve, Math.floor(promptData.index / openAiRPM) * 60 * 1000)
+      setTimeout(
+        resolve,
+        Math.floor(promptData.index / openAiRPM) * 60 * 1000 +
+          promptData.index * 20
+      )
     );
 
     // Build Request Body
@@ -315,6 +333,14 @@ export default function Home() {
     // Exponentially Retry
     let numberOfRetries = 0;
     while (numberOfRetries <= MAX_RETRIES) {
+      console.log({
+        index: promptData.index,
+        retries: numberOfRetries,
+        delay:
+          Math.floor(promptData.index / openAiRPM) * 60 * 1000 +
+          promptData.index * 20,
+        promptData: promptData,
+      });
       try {
         const response = await axios.post(CHATGPT_URL, body, {
           headers: headers,
@@ -326,6 +352,7 @@ export default function Home() {
         setProgressState({ ...progressState });
         return promptData;
       } catch (rawError: any) {
+        console.log(rawError);
         const error = rawError as AxiosError;
         if (error.response?.status === 429) {
           const delay = Math.pow(2, numberOfRetries + Math.random()) * 1000;
@@ -386,7 +413,7 @@ export default function Home() {
     }
 
     return {
-      normalizedScore: score / nAnswers,
+      normalizedScore: nAnswers ? score / nAnswers : 0,
       score,
       nAnswers,
     };
@@ -422,12 +449,15 @@ export default function Home() {
     const prompts: any[] = [];
 
     // Build Prompts w/ Context
-    if (selectedPromptColumn && selectedSampleColumn) {
+    if ((selectedPromptColumn || useManualPrompt) && selectedSampleColumn) {
       csvData.map((data, dataIdx) => {
         Object.keys(questions).map((question, qIdx) => {
           if (questions[question].active) {
             const prompt = userPrompt
-              .replace("$PROMPT", data[selectedPromptColumn])
+              .replace(
+                "$PROMPT",
+                selectedPromptColumn ? data[selectedPromptColumn] : manualPrompt
+              )
               .replace("$SAMPLE", data[selectedSampleColumn])
               .replace("$QUESTION", questions[question].question);
 
@@ -485,7 +515,7 @@ export default function Home() {
           nQuestions++;
         }
       }
-      output[i].weightedScore = score / nQuestions;
+      output[i].weightedScore = nQuestions ? score / nQuestions : 0;
     }
 
     setEvaluationFinished(true);
@@ -508,8 +538,11 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Authormation</title>
-        <meta name="description" content="Generated by create next app" />
+        <title>SampleCoach</title>
+        <meta
+          name="description"
+          content="AI-assisted Writing Sample Analysis"
+        />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
@@ -698,6 +731,7 @@ export default function Home() {
                           value={selectedPromptColumn}
                           labelId="prompt-select-label"
                           label="Question"
+                          disabled={useManualPrompt}
                           onChange={(e) =>
                             setSelectedPromptColumn(e.target.value)
                           }
@@ -712,6 +746,30 @@ export default function Home() {
                           ))}
                         </Select>
                       </FormControl>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={useManualPrompt}
+                            onChange={(e) => {
+                              setUseManualPrompt(e.target.checked);
+                              setSelectedPromptColumn("");
+                            }}
+                            inputProps={{ "aria-label": "Auto-generate Ids" }}
+                          />
+                        }
+                        label="Just write the Prompt instead"
+                      />
+                      {useManualPrompt && (
+                        <TextField
+                          label="Write in the prompt/goal"
+                          multiline
+                          fullWidth
+                          rows={3}
+                          value={manualPrompt}
+                          onChange={(e) => setManualPrompt(e.target.value)}
+                          helperText="This prompt will be used to assess each sample."
+                        />
+                      )}
                     </Grid>
 
                     <Grid item xs={3}>
@@ -798,7 +856,8 @@ export default function Home() {
 
                     {csvData.length > 0 &&
                       (selectedIdentifierColumn || autoIndexSamples) &&
-                      selectedPromptColumn &&
+                      (selectedPromptColumn ||
+                        (manualPrompt && useManualPrompt)) &&
                       selectedSampleColumn && (
                         <Box
                           sx={{
@@ -810,7 +869,15 @@ export default function Home() {
                           <Box sx={{ flexGrow: 1, height: 400 }}>
                             <DataGrid
                               rows={csvData.map((row, idx) => {
-                                return { ...row, id: idx };
+                                if (useManualPrompt) {
+                                  return {
+                                    ...row,
+                                    prompt: manualPrompt,
+                                    id: idx,
+                                  };
+                                } else {
+                                  return { ...row, id: idx };
+                                }
                               })}
                               columns={[
                                 {
@@ -821,7 +888,7 @@ export default function Home() {
                                   width: 150,
                                 },
                                 {
-                                  field: selectedPromptColumn,
+                                  field: selectedPromptColumn || "prompt",
                                   headerName: "Prompt",
                                   flex: 0.3,
                                 },
@@ -1116,12 +1183,15 @@ export default function Home() {
                             <Box sx={{ height: "20px", width: "100%" }}></Box>
                             <h4>Progress</h4>
                             <LinearProgress
-                              variant="buffer"
+                              variant="determinate"
                               value={
-                                (progressState.evaluationProgress /
-                                  (Object.keys(questions).length *
-                                    csvData.length)) *
-                                100
+                                evaluationFinished
+                                  ? 100
+                                  : ((progressState.evaluationProgress /
+                                      (Object.keys(questions).length *
+                                        csvData.length)) *
+                                      100) % // TODO: Figure out why progress state isn't sticking at zero
+                                    100
                               }
                             />
                           </>
