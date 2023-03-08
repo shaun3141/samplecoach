@@ -7,7 +7,7 @@ import validator from "@rjsf/validator-ajv8";
 import Form from "@rjsf/mui";
 import dynamic from "next/dynamic";
 const DynamicReactJson = dynamic(import("react-json-view"), { ssr: false });
-
+import PQueue from "p-queue";
 import Head from "next/head";
 import {
   Box,
@@ -97,8 +97,8 @@ const BASE_QUESTIONS: Record<string, IQuestion> = {
     question:
       "Was the passage above written by a native English speaker? Start your reply with a  `yes` or `no`.",
     answers: [
-      { answer: "yes", score: 0 },
-      { answer: "no", score: 1 },
+      { answer: "yes", score: 1 },
+      { answer: "no", score: 0 },
     ],
     active: true,
     numResponses: 10,
@@ -312,16 +312,6 @@ export default function Home() {
       Authorization: `Bearer ${openAiApiKey}`,
     };
 
-    // Set Delay to be per minute and per second, pegging the per second rate to the avg. per minute rate of Paid (3,500)
-    // 3500 / 60 = 58.3333 per second, 1 second divided by 58.3333 = 0.017 seconds, 0.017 * 1000 = 17 milliseconds, use 20ms as buffer
-    await new Promise((resolve) =>
-      setTimeout(
-        resolve,
-        Math.floor(promptData.index / openAiRPM) * 60 * 1000 +
-          promptData.index * 20
-      )
-    );
-
     // Build Request Body
     const body = {
       model: "gpt-3.5-turbo",
@@ -342,11 +332,9 @@ export default function Home() {
       console.log({
         index: promptData.index,
         retries: numberOfRetries,
-        delay:
-          Math.floor(promptData.index / openAiRPM) * 60 * 1000 +
-          promptData.index * 20,
         promptData: promptData,
       });
+
       try {
         const response = await axios.post(CHATGPT_URL, body, {
           headers: headers,
@@ -354,8 +342,10 @@ export default function Home() {
         promptData.response = response.data;
         promptData.success = true;
         promptData.error = null;
-        progressState.evaluationProgress = progressState.evaluationProgress + 1;
-        setProgressState({ ...progressState });
+        if (promptData.index > progressState.evaluationProgress) {
+          progressState.evaluationProgress = promptData.index;
+          setProgressState({ ...progressState });
+        }
         return promptData;
       } catch (rawError: any) {
         console.log(rawError);
@@ -367,9 +357,10 @@ export default function Home() {
           promptData.response = null;
           promptData.success = false;
           promptData.error = error;
-          progressState.evaluationProgress =
-            progressState.evaluationProgress + 1;
-          setProgressState({ ...progressState });
+          if (promptData.index > progressState.evaluationProgress) {
+            progressState.evaluationProgress = promptData.index;
+            setProgressState({ ...progressState });
+          }
           return promptData;
         }
       }
@@ -380,8 +371,10 @@ export default function Home() {
     promptData.response = null;
     promptData.success = false;
     promptData.error = "timeout";
-    progressState.evaluationProgress = progressState.evaluationProgress + 1;
-    setProgressState({ ...progressState });
+    if (promptData.index > progressState.evaluationProgress) {
+      progressState.evaluationProgress = promptData.index;
+      setProgressState({ ...progressState });
+    }
     return promptData;
   }
 
@@ -452,6 +445,18 @@ export default function Home() {
     setEvaluationFinished(false);
     setProgressState({ evaluationProgress: 0 });
 
+    // Per minute queue of requests to submit to OpenAI
+    const bucketQueue = new PQueue({ interval: 60 * 1000, intervalCap: 1 });
+
+    // Requests in a perMinute bucket to do in parallel
+    const queue = new PQueue({ concurrency: 50 });
+    const queueOutputs: any[] = [];
+
+    queue.on("completed", (result) => {
+      // ChatGPT request is complete, add to queueOutputs
+      queueOutputs.push(result);
+    });
+
     const prompts: any[] = [];
 
     // Build Prompts w/ Context
@@ -481,32 +486,57 @@ export default function Home() {
       });
     }
 
-    // Ask ChatGPT for responses
-    const responses = await Promise.allSettled(
-      prompts.map((prompt) => chatRequest(prompt))
-    );
+    // Break prompts into per-minute buckets
+    const perMinuteBuckets: any[] = [];
+    let nRequests = 0;
+    let nTokens = 0;
+    let bucketIndex = 0;
+    const tokenLimit = 3500000; // TODO - Use OpenAI's token limit per tier
 
-    // Build the output based on the sample index
+    for (let i = 0; i < prompts.length; i++) {
+      if (nRequests >= openAiRPM || nTokens >= tokenLimit) {
+        bucketIndex++;
+        nRequests = 0;
+        nTokens = 0;
+      }
+
+      if (!perMinuteBuckets[bucketIndex]) {
+        perMinuteBuckets[bucketIndex] = [];
+      }
+
+      perMinuteBuckets[bucketIndex].push(prompts[i]);
+      nRequests++;
+      nTokens += Math.round(prompts[i].prompt.split(" ").length / 0.66); // Conseratively approximate tokens used (OpenAI suggests .75)
+    }
+
+    const bucketsToDo = perMinuteBuckets.map((bucket) => async () => {
+      const tasks = bucket.map((prompt: any) => () => chatRequest(prompt));
+      await queue.addAll(tasks);
+      console.log("Bucket finished!");
+    });
+
+    await bucketQueue.addAll(bucketsToDo);
+
+    console.log("All should actually be finsiehd now!");
+
     const output = [];
-    for (const promiseResult of responses) {
-      if (promiseResult.status === "fulfilled") {
-        const val = promiseResult.value;
-        if (!output[val.data[INTERNAL_INDEX_FIELD]]) {
-          output[val.data[INTERNAL_INDEX_FIELD]] = {
-            ...val.data,
-            questions: {},
-          };
-        }
 
-        output[val.data[INTERNAL_INDEX_FIELD]]["questions"][val.questionKey] = {
-          rawAnswer: val.response,
-          successfulAnswer: val.success,
-          error: val.error,
-          questionAsked: val.question,
-          evaluation: computeResponse(val.question, val.response),
-          promptUsed: val.prompt,
+    for (const val of queueOutputs) {
+      if (!output[val.data[INTERNAL_INDEX_FIELD]]) {
+        output[val.data[INTERNAL_INDEX_FIELD]] = {
+          ...val.data,
+          questions: {},
         };
       }
+
+      output[val.data[INTERNAL_INDEX_FIELD]]["questions"][val.questionKey] = {
+        rawAnswer: val.response,
+        successfulAnswer: val.success,
+        error: val.error,
+        questionAsked: val.question,
+        evaluation: computeResponse(val.question, val.response),
+        promptUsed: val.prompt,
+      };
     }
 
     // Compute Weighted Scores
@@ -631,7 +661,6 @@ export default function Home() {
                 variant="outlined"
                 sx={{ marginRight: "10px" }}
                 onClick={() => {
-                  console.log("Copy as JSON");
                   navigator.clipboard.writeText(
                     JSON.stringify(questions, null, 2)
                   );
