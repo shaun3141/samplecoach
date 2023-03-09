@@ -553,16 +553,16 @@ export default function Home() {
     // Compute Weighted Scores
     for (let i = 0; i < output.length; i++) {
       let score = 0;
-      let nQuestions = 0;
+      let nQuestionWeight = 0;
       for (const questionKey of Object.keys(output[i].questions)) {
         if (output[i].questions[questionKey].successfulAnswer) {
           score +=
             output[i].questions[questionKey].evaluation.normalizedScore *
             questions[questionKey].weight;
-          nQuestions++;
+          nQuestionWeight += questions[questionKey].weight;
         }
       }
-      output[i].weightedScore = nQuestions ? score / nQuestions : 0;
+      output[i].weightedScore = nQuestionWeight ? score / nQuestionWeight : 0;
     }
 
     setEvaluationFinished(true);
