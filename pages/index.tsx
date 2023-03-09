@@ -562,7 +562,9 @@ export default function Home() {
           nQuestionWeight += questions[questionKey].weight;
         }
       }
-      output[i].weightedScore = nQuestionWeight ? score / nQuestionWeight : 0;
+      output[i].weightedScore = nQuestionWeight
+        ? Math.round((score / nQuestionWeight) * 100) / 100
+        : 0;
     }
 
     setEvaluationFinished(true);
