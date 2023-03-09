@@ -254,6 +254,17 @@ export default function Home() {
         skipEmptyLines: true,
         complete: function (results: { data: any[] }) {
           const firstItem = results.data[0];
+
+          // Filter out rows with no values
+          results.data = results.data.filter((item) => {
+            return (
+              Object.values(item).filter((_) => {
+                // @ts-ignore TODO: It gets mad when I add (_: string) to the type too, ugh
+                return _.trim() !== "";
+              }).length > 0
+            );
+          });
+
           setCsvData(
             results.data.map((item, idx) => {
               item[INTERNAL_INDEX_FIELD] = idx;
