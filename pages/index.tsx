@@ -393,32 +393,34 @@ export default function Home() {
     let score = 0;
     let nAnswers = 0;
 
-    for (const choice of rawAnswer.choices) {
-      // Sanitize string and break into words
-      const textParts = choice.message.content
-        .replace(/[^a-zA-Z0-9\s]/g, "")
-        .toLowerCase()
-        .split(" ");
+    if (rawAnswer?.choices) {
+      for (const choice of rawAnswer.choices) {
+        // Sanitize string and break into words
+        const textParts = choice.message.content
+          .replace(/[^a-zA-Z0-9\s]/g, "")
+          .toLowerCase()
+          .split(" ");
 
-      // Find the answer
-      let VERY_HIGH_NUMBER = 100000;
-      let firstAnswer = VERY_HIGH_NUMBER;
-      let answerScore = 0;
+        // Find the answer
+        let VERY_HIGH_NUMBER = 100000;
+        let firstAnswer = VERY_HIGH_NUMBER;
+        let answerScore = 0;
 
-      for (const answer of questionAsked.answers) {
-        let idx = textParts.indexOf(
-          answer.answer.replace(/[^a-zA-Z0-9\s]/g, "").toLowerCase()
-        );
-        if (idx !== -1 && idx < firstAnswer) {
-          firstAnswer = idx;
-          answerScore = answer.score;
+        for (const answer of questionAsked.answers) {
+          let idx = textParts.indexOf(
+            answer.answer.replace(/[^a-zA-Z0-9\s]/g, "").toLowerCase()
+          );
+          if (idx !== -1 && idx < firstAnswer) {
+            firstAnswer = idx;
+            answerScore = answer.score;
+          }
         }
-      }
 
-      // If we found an answer, add it to the score
-      if (firstAnswer !== VERY_HIGH_NUMBER) {
-        score += answerScore;
-        nAnswers++;
+        // If we found an answer, add it to the score
+        if (firstAnswer !== VERY_HIGH_NUMBER) {
+          score += answerScore;
+          nAnswers++;
+        }
       }
     }
 
