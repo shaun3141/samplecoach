@@ -335,6 +335,7 @@ export default function Home() {
         },
       ],
       n: promptData.question.numResponses,
+      max_tokens: 512,
     };
 
     // Exponentially Retry
@@ -396,8 +397,9 @@ export default function Home() {
     if (rawAnswer?.choices) {
       for (const choice of rawAnswer.choices) {
         // Sanitize string and break into words
+        // do allow numbers, hyphens, and underscores to be part of words
         const textParts = choice.message.content
-          .replace(/[^a-zA-Z0-9\s]/g, "")
+          .replace(/[^a-zA-Z0-9_\-\s]/g, "")
           .toLowerCase()
           .split(" ");
 
@@ -408,7 +410,7 @@ export default function Home() {
 
         for (const answer of questionAsked.answers) {
           let idx = textParts.indexOf(
-            answer.answer.replace(/[^a-zA-Z0-9\s]/g, "").toLowerCase()
+            answer.answer.replace(/[^a-zA-Z0-9_\-\s]/g, "").toLowerCase()
           );
           if (idx !== -1 && idx < firstAnswer) {
             firstAnswer = idx;
